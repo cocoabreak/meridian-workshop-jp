@@ -38,9 +38,9 @@
               <span class="kpi-label">{{ t('dashboard.kpi.orderFillRate') }}</span>
             </div>
             <div class="kpi-value">{{ fillRate.toFixed(1) }}%</div>
-            <div class="kpi-goal">{{ t('dashboard.kpi.goal') }}: 95% ({{ fillRate - 95 > 0 ? '+' : '' }}{{ (fillRate - 95).toFixed(2) }}%)</div>
+            <div class="kpi-goal">{{ t('dashboard.kpi.goal') }}: {{ fillRateGoal }}% ({{ fillRate - fillRateGoal > 0 ? '+' : '' }}{{ (fillRate - fillRateGoal).toFixed(2) }}%)</div>
             <div class="kpi-progress-bar">
-              <div class="kpi-progress success" :style="{ width: Math.min(fillRate / 95 * 100, 100) + '%' }"></div>
+              <div class="kpi-progress success" :style="{ width: Math.min(fillRate / fillRateGoal * 100, 100) + '%' }"></div>
             </div>
           </div>
 
@@ -346,7 +346,11 @@ export default {
     } = useFilters()
 
     // KPI はフィルター適用済みの allOrders から計算する（固定値にしない）
+    // 目標値（KPI の目標はここにまとめる）
+    const MONTHS_PER_YEAR = 12
     const FULFILLED_GOAL_YEAR = 200
+    const REVENUE_GOAL_MONTHLY = 800000
+    const fillRateGoal = 95
     const processingGoalDays = 3.0
 
     const ordersData = computed(() => {
@@ -354,7 +358,7 @@ export default {
       // 全期間は年間目標、単月は年間目標を12で割って丸めた値
       const goal = selectedPeriod.value === 'all'
         ? FULFILLED_GOAL_YEAR
-        : Math.round(FULFILLED_GOAL_YEAR / 12)
+        : Math.round(FULFILLED_GOAL_YEAR / MONTHS_PER_YEAR)
       return { fulfilled, goal }
     })
 
@@ -370,13 +374,15 @@ export default {
     })
 
     // 平均処理時間 = Delivered 注文の (actual_delivery - order_date) の平均日数。算出できなければ null
+    // 注文ヘルスの「平均出荷日数」もこの値を使う（同じ指標を2通りに計算しない）
     const avgProcessingDays = computed(() => {
       let totalDays = 0
       let count = 0
       allOrders.value.forEach(o => {
         if (o.status.toLowerCase() !== 'delivered' || !o.order_date || !o.actual_delivery) return
         const ms = new Date(o.actual_delivery) - new Date(o.order_date)
-        if (isNaN(ms)) return
+        // 不正な日付や、配送日が注文日より前のデータは平均に入れない
+        if (isNaN(ms) || ms < 0) return
         totalDays += ms / (1000 * 60 * 60 * 24)
         count++
       })
@@ -385,11 +391,10 @@ export default {
 
     const revenueGoal = computed(() => {
       // $800K per month, so if looking at all months (12 months), goal is 12 * 800K = 9.6M
-      const monthlyGoal = 800000
       if (selectedPeriod.value === 'all') {
-        return monthlyGoal * 12 // $9,600,000 for the full year
+        return REVENUE_GOAL_MONTHLY * MONTHS_PER_YEAR // $9,600,000 for the full year
       }
-      return monthlyGoal // $800,000 for a single month
+      return REVENUE_GOAL_MONTHLY // $800,000 for a single month
     })
 
     const revenueGoalDisplay = computed(() => {
@@ -423,19 +428,8 @@ export default {
       }).length
       const onTimeRate = deliveredOrders.length > 0 ? (onTimeDeliveries / deliveredOrders.length) * 100 : 0
 
-      // Calculate average fulfillment speed (days from order to delivery for delivered orders)
-      let totalDays = 0
-      let countWithDates = 0
-      deliveredOrders.forEach(o => {
-        if (o.order_date && o.actual_delivery) {
-          const orderDate = new Date(o.order_date)
-          const deliveryDate = new Date(o.actual_delivery)
-          const days = Math.round((deliveryDate - orderDate) / (1000 * 60 * 60 * 24))
-          totalDays += days
-          countWithDates++
-        }
-      })
-      const avgFulfillmentDays = countWithDates > 0 ? totalDays / countWithDates : 0
+      // Average fulfillment speed: 上部 KPI の平均処理時間と同じ値を使う（算出できなければ 0）
+      const avgFulfillmentDays = avgProcessingDays.value ?? 0
 
       return {
         totalOrders,
@@ -730,6 +724,7 @@ export default {
       summary,
       ordersData,
       fillRate,
+      fillRateGoal,
       avgProcessingDays,
       processingGoalDays,
       statusData,
